@@ -87,6 +87,24 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   let startCtxTime = 0; // ctx.currentTime at playback start
   let startOffset = 0; // media offset at that moment
   let rafId = null;
+  let _rafIsTimeout = false;
+  // requestAnimationFrame pauses when the tab is hidden. Use setTimeout as a
+  // fallback so loop detection and end reporting keep working in the background.
+  function _scheduleTick() {
+    if (document.hidden) {
+      _rafIsTimeout = true;
+      rafId = setTimeout(tick, 100);
+    } else {
+      _rafIsTimeout = false;
+      rafId = requestAnimationFrame(tick);
+    }
+  }
+  function _cancelTick() {
+    if (!rafId) return;
+    if (_rafIsTimeout) clearTimeout(rafId);
+    else cancelAnimationFrame(rafId);
+    rafId = null;
+  }
   let destroyed = false;
   let loop = { enabled: false, start: 0, end: 0 };
   // Bumped whenever the media-time -> ctx-time mapping below changes (start,
@@ -267,7 +285,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
       return;
     }
     onTime?.(t);
-    rafId = requestAnimationFrame(tick);
+    _scheduleTick();
   }
 
   // `leadIn` (source seconds, default 0) delays the moment the stems begin so a
@@ -285,7 +303,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     const when = ctx.currentTime + (lead > 0 ? (lead + COUNT_IN_MARGIN) / srcRate() : 0);
     startSources(off, when);
     playing = true;
-    rafId = requestAnimationFrame(tick);
+    _scheduleTick();
   }
 
   function pause() {
@@ -296,7 +314,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     playing = false;
     startOffset = Math.max(0, Math.min(t, duration));
     _epoch++;
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    _cancelTick();
   }
 
   function seek(t) {
@@ -378,7 +396,7 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
     destroyed = true;
     stopSources();
     resetProcessor();
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    _cancelTick();
     tracks.clear();
     if (stNode) { try { stNode.disconnect(); } catch { /* noop */ } }
     if (ownsCtx) ctx.close().catch(() => {});

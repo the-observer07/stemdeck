@@ -289,6 +289,25 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
 
   let _duration = 0;
   let rafId = null;
+  let _rafIsTimeout = false;
+  // requestAnimationFrame pauses when the tab is hidden, which would stop chunk
+  // scheduling after the 12-second lookahead runs out. Fall back to setTimeout
+  // while hidden so scheduling continues uninterrupted.
+  function _scheduleTick() {
+    if (document.hidden) {
+      _rafIsTimeout = true;
+      rafId = setTimeout(_tick, 100);
+    } else {
+      _rafIsTimeout = false;
+      rafId = requestAnimationFrame(_tick);
+    }
+  }
+  function _cancelTick() {
+    if (!rafId) return;
+    if (_rafIsTimeout) clearTimeout(rafId);
+    else cancelAnimationFrame(rafId);
+    rafId = null;
+  }
   // Why ready() resolved false, in words fit to show a user. Read via
   // getLoadError() by the caller that decides what to put on screen.
   let _loadError = null;
@@ -609,14 +628,14 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       playing = false;
       _audioStarted = false;
       _startOffset = _duration;
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      _cancelTick();
       onTime?.(_duration);
       onEnded?.();
       return;
     }
     _maybeSchedule();
     onTime?.(t);
-    rafId = requestAnimationFrame(_tick);
+    _scheduleTick();
   }
 
   // --- public API ---
@@ -650,7 +669,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       _audioStarted = true;
       _epoch++; // mapping is valid from here; see isClockReady
       _fetchChunk(chunkIdx + 1); // pre-fetch next chunk
-      rafId = requestAnimationFrame(_tick);
+      _scheduleTick();
     };
 
     // chunk 0 is pre-decoded during ready(), so the sync path is the hot path.
@@ -677,7 +696,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     _audioStarted = false;
     _epoch++;
     _scheduledTo = _startOffset;
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    _cancelTick();
   }
 
   function seek(t) {
@@ -687,7 +706,7 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
       _stopNodes();
       playing = false;
       _audioStarted = false;
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      _cancelTick();
     }
     _resetProcessor();
     _startOffset = clamped;
