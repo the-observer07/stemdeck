@@ -644,6 +644,16 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     if (playing && ctx.state === 'suspended') ctx.resume().catch(() => {});
   });
 
+  // When the tab becomes hidden the browser cancels any pending
+  // requestAnimationFrame before it fires, so _scheduleTick never gets to
+  // switch to setTimeout and the tick loop dies. Restart it here explicitly.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && playing) {
+      _cancelTick();
+      _scheduleTick();
+    }
+  });
+
   // --- public API ---
 
   // `leadIn` (source seconds, default 0) delays the moment the stems begin so

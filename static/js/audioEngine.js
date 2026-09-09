@@ -112,6 +112,16 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   ctx.addEventListener('statechange', () => {
     if (playing && ctx.state === 'suspended') ctx.resume().catch(() => {});
   });
+
+  // When the tab becomes hidden the browser cancels any pending
+  // requestAnimationFrame before it fires, so _scheduleTick never gets to
+  // switch to setTimeout and the tick loop dies. Restart it here explicitly.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && playing) {
+      _cancelTick();
+      _scheduleTick();
+    }
+  });
   // Bumped whenever the media-time -> ctx-time mapping below changes (start,
   // seek, loop jump, rate change, pause). The metronome watches this to know
   // when its already-scheduled clicks are stale and must be torn down.
