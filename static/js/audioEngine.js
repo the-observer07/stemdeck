@@ -107,6 +107,11 @@ export function createAudioEngine(stems, { onTime, onEnded, context } = {}) {
   }
   let destroyed = false;
   let loop = { enabled: false, start: 0, end: 0 };
+  // Resume the AudioContext if the browser suspends it while we are playing
+  // (some browsers suspend it for background tabs to save power).
+  ctx.addEventListener('statechange', () => {
+    if (playing && ctx.state === 'suspended') ctx.resume().catch(() => {});
+  });
   // Bumped whenever the media-time -> ctx-time mapping below changes (start,
   // seek, loop jump, rate change, pause). The metronome watches this to know
   // when its already-scheduled clicks are stale and must be torn down.

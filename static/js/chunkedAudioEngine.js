@@ -638,6 +638,12 @@ export function createChunkedAudioEngine(stems, { onTime, onEnded, context } = {
     _scheduleTick();
   }
 
+  // Resume the AudioContext if the browser suspends it while we are playing
+  // (some browsers suspend it for background tabs to save power).
+  ctx.addEventListener('statechange', () => {
+    if (playing && ctx.state === 'suspended') ctx.resume().catch(() => {});
+  });
+
   // --- public API ---
 
   // `leadIn` (source seconds, default 0) delays the moment the stems begin so
