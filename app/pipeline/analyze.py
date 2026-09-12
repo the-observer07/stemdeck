@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import subprocess
 from pathlib import Path
 
@@ -48,11 +49,12 @@ _MINOR_PROFILE = (
 _PITCHES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 # When the best-major and best-minor scores are this close, we prefer
-# minor. Pop/rock has a strong minor-mode prior; the algorithm often
-# walks toward the relative major because of an ostinato bass note
-# (e.g. "Come As You Are" hammers the open D string in an E minor song),
-# and minor is the better default when the call is genuinely ambiguous.
-_MINOR_TIE_BREAK_FRAC = 0.05
+# minor. Pop/rock has a strong minor-mode prior, and minor is the better
+# default when the call is genuinely ambiguous (e.g. flat or near-flat
+# chroma). The fraction is deliberately small (0.5 %) so that a real
+# Pearson advantage for major is not overridden — only near-zero gaps
+# trigger the preference.
+_MINOR_TIE_BREAK_FRAC = 0.005
 
 
 def _correlate(profile: tuple[float, ...], chroma: list[float], shift: int) -> float:
@@ -69,14 +71,15 @@ def _correlate(profile: tuple[float, ...], chroma: list[float], shift: int) -> f
 
 
 def _detect_key(chroma_mean: list[float]) -> tuple[str, str, int]:
-    """Find the best-matching key by combining profile correlation with
-    root prominence. The Pearson correlation alone is fooled by relative
-    keys whose diatonic notes happen to overlap with the song's loud
-    pitches but whose own tonic is weak (e.g. picking A minor for an
-    E-minor song because E is its 5th and D is its 4th). Weighting by
-    the candidate root's chroma value forces the algorithm to also
-    confirm 'is this proposed tonic actually loud in the audio?'.
-    Logs the chroma vector and top-5 candidates for diagnostics.
+    """Find the best-matching key using sqrt-compressed Pearson correlation.
+
+    Sqrt compression reduces the dominance of any single loud pitch class
+    so that the diatonic note pattern — not just which note is loudest —
+    drives the result. Without it, a loud subdominant (e.g. E in a B major
+    track where the IV chord is heavy) fools the algorithm into picking the
+    key where that note IS the tonic (E major), because having the tonic bin
+    at maximum gives E major a large Pearson advantage that overwhelms the
+    A#-vs-A discriminating signal.
 
     Returns (label, scale_name, confidence_pct).
     - label:        e.g. "G# maj"
@@ -84,24 +87,20 @@ def _detect_key(chroma_mean: list[float]) -> tuple[str, str, int]:
     - confidence_pct: 0-100, derived from the gap between the winning
                     candidate and the runner-up, normalized so a clear
                     win ranks high and a near-tie ranks low."""
-    raw: list[tuple[float, float, str, int]] = []  # (weighted, pearson, label, root_idx)
+    compressed = [math.sqrt(v) for v in chroma_mean]
+    raw: list[tuple[float, float, str, int]] = []  # (score, pearson, label, root_idx)
     for shift in range(12):
-        root_strength = chroma_mean[shift]
-        pearson_maj = _correlate(_MAJOR_PROFILE, chroma_mean, shift)
-        pearson_min = _correlate(_MINOR_PROFILE, chroma_mean, shift)
-        # Multiplicative root weighting. Pearson can be negative; when
-        # it is, a low-chroma root makes things less negative (closer to
-        # zero), which is actually the desired ordering.
-        raw.append((pearson_maj * root_strength, pearson_maj, f"{_PITCHES[shift]} maj", shift))
-        raw.append((pearson_min * root_strength, pearson_min, f"{_PITCHES[shift]} min", shift))
+        pearson_maj = _correlate(_MAJOR_PROFILE, compressed, shift)
+        pearson_min = _correlate(_MINOR_PROFILE, compressed, shift)
+        raw.append((pearson_maj, pearson_maj, f"{_PITCHES[shift]} maj", shift))
+        raw.append((pearson_min, pearson_min, f"{_PITCHES[shift]} min", shift))
     raw.sort(key=lambda x: x[0], reverse=True)
 
-    # Diagnostic log: chroma profile + top 5 candidates with both raw
-    # and weighted scores. Lets us see what the algorithm is "hearing".
-    chroma_str = ", ".join(f"{_PITCHES[i]}={chroma_mean[i]:.3f}" for i in range(12))
+    # Diagnostic log: compressed chroma + top 5 candidates.
+    chroma_str = ", ".join(f"{_PITCHES[i]}={compressed[i]:.3f}" for i in range(12))
     top5_str = ", ".join(
-        f"{label}={weighted:+.3f}(p{pearson:+.2f}*r{chroma_mean[idx]:.2f})"
-        for weighted, pearson, label, idx in raw[:5]
+        f"{label}={pearson:+.3f}"
+        for _, pearson, label, _idx in raw[:5]
     )
     logger.debug("chroma: %s", chroma_str)
     logger.debug("key candidates (top 5): %s", top5_str)

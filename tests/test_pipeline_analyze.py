@@ -38,6 +38,14 @@ def chroma_for(notes: dict[str, float], floor: float = 0.05) -> list[float]:
 C_MAJOR = chroma_for({"C": 1.0, "E": 0.8, "G": 0.9, "D": 0.5, "A": 0.5, "B": 0.45, "F": 0.5})
 A_MINOR = chroma_for({"A": 1.0, "C": 0.8, "E": 0.9, "D": 0.5, "G": 0.6, "F": 0.5, "B": 0.35})
 
+# B major where the IV chord root (E) is louder than the tonic (B). This
+# reproduces the reported mis-detection as E major: E=1.0 at the "tonic"
+# position of E major gave it a large Pearson advantage before sqrt
+# compression reduced the influence of any single loud pitch class.
+B_MAJOR_LOUD_IV = chroma_for(
+    {"B": 0.70, "C#": 0.50, "D#": 0.50, "E": 1.00, "F#": 0.80, "G#": 0.65, "A#": 0.40}
+)
+
 
 # ── _correlate ───────────────────────────────────────────────────────
 
@@ -88,6 +96,27 @@ def test_detects_a_major_key():
 def test_detects_a_minor_key():
     label, scale, _ = az._detect_key(A_MINOR)
     assert label == "A min"
+    assert scale == "Natural Minor"
+
+
+def test_b_major_with_loud_subdominant():
+    """E (the IV/subdominant) is louder than B (the tonic) in this chroma.
+    Before the sqrt pre-compression fix the algorithm returned E major,
+    because E=1.0 at the tonic position of E major gave it a Pearson
+    advantage that root-weighting then amplified."""
+    label, scale, _ = az._detect_key(B_MAJOR_LOUD_IV)
+    assert label == "B maj", f"B major with loud IV mis-identified as {label}"
+    assert scale == "Major"
+
+
+def test_relative_major_does_not_steal_when_its_root_is_louder():
+    """A minor song where C (the relative major tonic) is slightly louder
+    than A should still resolve to A minor, not C major."""
+    chroma = chroma_for(
+        {"A": 0.80, "C": 0.90, "E": 0.85, "G": 0.70, "B": 0.60, "D": 0.55, "F": 0.50}
+    )
+    label, scale, _ = az._detect_key(chroma)
+    assert label == "A min", f"A minor with loud relative-major tonic identified as {label}"
     assert scale == "Natural Minor"
 
 
